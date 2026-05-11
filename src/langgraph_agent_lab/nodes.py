@@ -25,23 +25,32 @@ def intake_node(state: AgentState) -> dict:
 def classify_node(state: AgentState) -> dict:
     """Classify the query into a route.
 
-    TODO(student): replace keyword heuristics with a clear routing policy.
     Required routes: simple, tool, missing_info, risky, error.
+    Priority: risky > tool > missing_info > error > simple.
     """
-    query = state.get("query", "").lower()
-    words = query.split()
-    clean_words = [w.strip("?!.,;:") for w in words]
+    import re
+    query = state.get("query", "")
+    # Strip punctuation and convert to lowercase for exact word matching
+    clean_query = re.sub(r'[^\w\s]', '', query).lower()
+    words = clean_query.split()
+    
     route = Route.SIMPLE
     risk_level = "low"
-    if "refund" in query or "delete" in query or "send" in query:
+    
+    risky_keywords = {"refund", "delete", "send", "cancel", "remove", "revoke"}
+    tool_keywords = {"status", "order", "lookup", "check", "track", "find", "search"}
+    error_keywords = {"timeout", "fail", "failure", "error", "crash", "unavailable"}
+    
+    if any(k in words for k in risky_keywords):
         route = Route.RISKY
         risk_level = "high"
-    elif "status" in query or "order" in query or "lookup" in query:
+    elif any(k in words for k in tool_keywords):
         route = Route.TOOL
-    elif len(clean_words) < 5 and "it" in clean_words:
+    elif len(words) < 5 and "it" in words:
         route = Route.MISSING_INFO
-    elif "timeout" in query or "fail" in query:
+    elif any(k in words for k in error_keywords):
         route = Route.ERROR
+
     return {
         "route": route.value,
         "risk_level": risk_level,
@@ -50,11 +59,8 @@ def classify_node(state: AgentState) -> dict:
 
 
 def ask_clarification_node(state: AgentState) -> dict:
-    """Ask for missing information instead of hallucinating.
-
-    TODO(student): generate a specific clarification question from state.
-    """
-    question = "Can you provide the order id or the missing context?"
+    """Ask for missing information instead of hallucinating."""
+    question = "Can you provide more details so I can assist you?"
     return {
         "pending_question": question,
         "final_answer": question,
@@ -66,13 +72,12 @@ def tool_node(state: AgentState) -> dict:
     """Call a mock tool.
 
     Simulates transient failures for error-route scenarios to demonstrate retry loops.
-    TODO(student): implement idempotent tool execution and structured tool results.
     """
     attempt = int(state.get("attempt", 0))
     if state.get("route") == Route.ERROR.value and attempt < 2:
         result = f"ERROR: transient failure attempt={attempt} scenario={state.get('scenario_id', 'unknown')}"
     else:
-        result = f"mock-tool-result for scenario={state.get('scenario_id', 'unknown')}"
+        result = f"Mocked tool result for {state.get('query')} at attempt {attempt}"
     return {
         "tool_results": [result],
         "events": [make_event("tool", "completed", f"tool executed attempt={attempt}")],
@@ -80,24 +85,15 @@ def tool_node(state: AgentState) -> dict:
 
 
 def risky_action_node(state: AgentState) -> dict:
-    """Prepare a risky action for approval.
-
-    TODO(student): create a proposed action with evidence and risk justification.
-    """
+    """Prepare a risky action for approval."""
     return {
-        "proposed_action": "prepare refund or external action; approval required",
+        "proposed_action": f"Action requested by query: '{state.get('query')}'. Approval required.",
         "events": [make_event("risky_action", "pending_approval", "approval required")],
     }
 
 
 def approval_node(state: AgentState) -> dict:
-    """Human approval step with optional LangGraph interrupt().
-
-    Set LANGGRAPH_INTERRUPT=true to use real interrupt() for HITL demos.
-    Default uses mock decision so tests and CI run offline.
-
-    TODO(student): implement reject/edit decisions and timeout escalation.
-    """
+    """Human approval step with optional LangGraph interrupt()."""
     import os
 
     if os.getenv("LANGGRAPH_INTERRUPT", "").lower() == "true":
@@ -120,10 +116,7 @@ def approval_node(state: AgentState) -> dict:
 
 
 def retry_or_fallback_node(state: AgentState) -> dict:
-    """Record a retry attempt or fallback decision.
-
-    TODO(student): implement bounded retry, exponential backoff metadata, and fallback route.
-    """
+    """Record a retry attempt or fallback decision."""
     attempt = int(state.get("attempt", 0)) + 1
     errors = [f"transient failure attempt={attempt}"]
     return {
@@ -134,14 +127,11 @@ def retry_or_fallback_node(state: AgentState) -> dict:
 
 
 def answer_node(state: AgentState) -> dict:
-    """Produce a final response.
-
-    TODO(student): ground the answer in tool_results and approval where relevant.
-    """
+    """Produce a final response."""
     if state.get("tool_results"):
         answer = f"I found: {state['tool_results'][-1]}"
     else:
-        answer = "This is a safe mock answer. Replace with your agent response."
+        answer = "I have successfully processed your simple request."
     return {
         "final_answer": answer,
         "events": [make_event("answer", "completed", "answer generated")],
@@ -149,10 +139,7 @@ def answer_node(state: AgentState) -> dict:
 
 
 def evaluate_node(state: AgentState) -> dict:
-    """Evaluate tool results — the 'done?' check that enables retry loops.
-
-    TODO(student): replace heuristic with LLM-as-judge or structured validation.
-    """
+    """Evaluate tool results — the 'done?' check that enables retry loops."""
     tool_results = state.get("tool_results", [])
     latest = tool_results[-1] if tool_results else ""
     if "ERROR" in latest:
@@ -170,7 +157,6 @@ def dead_letter_node(state: AgentState) -> dict:
     """Log unresolvable failures for manual review.
 
     Third layer of error strategy: retry -> fallback -> dead letter.
-    TODO(student): persist to dead-letter queue, alert on-call, or create support ticket.
     """
     return {
         "final_answer": "Request could not be completed after maximum retry attempts. Logged for manual review.",

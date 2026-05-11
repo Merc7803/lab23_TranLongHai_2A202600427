@@ -20,9 +20,10 @@ def build_checkpointer(kind: str = "memory", database_url: str | None = None) ->
     if kind == "sqlite":
         try:
             from langgraph.checkpoint.sqlite import SqliteSaver
+            import sqlite3
         except ImportError as exc:
             raise RuntimeError("SQLite checkpointer requires: pip install langgraph-checkpoint-sqlite") from exc
-        return SqliteSaver.from_conn_string(database_url or "checkpoints.db")
+        return SqliteSaver(conn=sqlite3.connect(database_url or "checkpoints.db", check_same_thread=False))
     if kind == "postgres":
         try:
             from langgraph.checkpoint.postgres import PostgresSaver
